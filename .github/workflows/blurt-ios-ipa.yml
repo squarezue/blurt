@@ -1,0 +1,60 @@
+name: Build Blurt iOS IPA (unsigned)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 25
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install XcodeGen and generate project
+        working-directory: apps/ios
+        run: |
+          xcodebuild -version
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Build unsigned iOS app
+        working-directory: apps/ios
+        run: |
+          xcodebuild \
+            -project BlurtRemote.xcodeproj \
+            -scheme BlurtRemote \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/blurt-derived-data" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            build
+
+      - name: Package unsigned IPA
+        run: |
+          app="$RUNNER_TEMP/blurt-derived-data/Build/Products/Release-iphoneos/BlurtRemote.app"
+          test -f "$app/Info.plist"
+          executable=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Info.plist")
+          test -f "$app/$executable"
+
+          staging=$(mktemp -d "$RUNNER_TEMP/blurt-ipa.XXXXXX")
+          mkdir "$staging/Payload"
+          ditto "$app" "$staging/Payload/BlurtRemote.app"
+          ipa="$RUNNER_TEMP/BlurtRemote-unsigned.ipa"
+          ditto -c -k --keepParent "$staging/Payload" "$ipa"
+          unzip -tq "$ipa"
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: BlurtRemote-iOS-unsigned-IPA
+          path: ${{ runner.temp }}/BlurtRemote-unsigned.ipa
+          if-no-files-found: error
